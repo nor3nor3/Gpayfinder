@@ -1,6 +1,10 @@
-# API keys — 절대 커밋하지 마세요
-# config.example.js 를 복사해 config.js 를 만들고 실제 키를 입력하세요
-config.js
+# 환경변수 파일 — 절대 커밋하지 마세요
+.env
+.env.local
+.env.*.local
+
+# Vercel 빌드 캐시
+.vercel/
 
 # OS / editor
 .DS_Store
