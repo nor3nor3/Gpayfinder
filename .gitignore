@@ -1,0 +1,10 @@
+# API keys — never commit this file with real values
+# config.js
+# Uncomment the line above once you've added real API keys.
+# Keep it tracked (with placeholder values) so collaborators know the format.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
