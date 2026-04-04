@@ -1,7 +1,6 @@
-# API keys — never commit this file with real values
-# config.js
-# Uncomment the line above once you've added real API keys.
-# Keep it tracked (with placeholder values) so collaborators know the format.
+# API keys — 절대 커밋하지 마세요
+# config.example.js 를 복사해 config.js 를 만들고 실제 키를 입력하세요
+config.js
 
 # OS / editor
 .DS_Store
