@@ -203,9 +203,9 @@
   // ═══════════════════════════════════════════════════════════
   function loadNaverSDK(clientId) {
     return new Promise((resolve, reject) => {
+      window.__naverMapReady = resolve;
       const s = document.createElement('script');
-      s.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${encodeURIComponent(clientId)}`;
-      s.onload = resolve;
+      s.src = `https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${encodeURIComponent(clientId)}&callback=__naverMapReady`;
       s.onerror = () => reject(new Error('네이버 지도 SDK 로드 실패'));
       document.head.appendChild(s);
     });
@@ -320,6 +320,7 @@
   function renderMarkers() {
     if (!state.map || state.merchants.length === 0) return;
     const bounds = state.map.getBounds();
+    if (!bounds) return;
     const zoom   = state.map.getZoom();
 
     const visible = state.merchants.filter(m => {
@@ -511,6 +512,9 @@
       // 2) 네이버 지도 SDK 로드
       setLoading(true, '지도 초기화 중...');
       await loadNaverSDK(cfg.naverMapClientId);
+      if (!window.naver || !naver.maps || !naver.maps.LatLng) {
+        throw new Error('네이버 지도 인증 실패 — NCP 콘솔 > Application > 내 앱 > Web Service URL에 http://localhost:3000 이 등록되어 있는지 확인하세요.');
+      }
       initMap();
       setupFilters();
       setupLocationButton();
