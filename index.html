@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>경기지역화폐 가맹점 지도</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    #map { position: fixed; inset: 0; background: #e8e8e8; }
+
+    #bottom-panel {
+      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      transform: translateY(100%);
+      will-change: transform;
+    }
+    #bottom-panel.open { transform: translateY(0); }
+
+    .filter-btn { white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+    .filter-btn.active { background: #2563eb !important; color: #fff !important; border-color: #2563eb !important; }
+
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin-anim { animation: spin .9s linear infinite; }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <!-- 설정 오류 안내 -->
+  <div id="config-error" style="display:none"
+       class="fixed inset-0 bg-gray-100 z-50 flex items-center justify-center p-6">
+    <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 text-center">
+      <div class="text-5xl mb-4">⚙️</div>
+      <h2 class="text-xl font-bold text-gray-800 mb-2">서버 환경변수 설정 필요</h2>
+      <p class="text-sm text-gray-500 mb-5">Vercel 대시보드 또는 <code class="bg-gray-100 px-1 rounded">.env.local</code> 파일에 아래 키를 설정해주세요.</p>
+      <div class="bg-gray-50 rounded-xl p-4 text-left text-xs font-mono text-gray-600 space-y-1">
+        <p>NAVER_MAP_CLIENT_ID</p>
+        <p>KAKAO_REST_API_KEY</p>
+        <p>GGDATA_API_KEY</p>
+        <p class="text-gray-400">DEFAULT_SIGUN (선택, 기본: 수원시)</p>
+      </div>
+      <p id="config-error-detail" class="mt-3 text-xs text-red-500"></p>
+    </div>
+  </div>
+
+  <!-- 업종 필터 -->
+  <div class="fixed top-0 left-0 right-0 z-10 px-3 pt-3 pb-0 pointer-events-none">
+    <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-md px-3 py-2 pointer-events-auto">
+      <div id="filter-bar" class="flex gap-2 overflow-x-auto no-scrollbar">
+        <button class="filter-btn active text-sm px-3 py-1.5 rounded-full border border-blue-600"      data-category="전체">전체</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="음식점">음식점</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="카페">카페</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="마트/편의점">마트</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="의료">의료</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="미용">미용</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="교육">교육</button>
+        <button class="filter-btn        text-sm px-3 py-1.5 rounded-full border border-gray-300 text-gray-700" data-category="기타">기타</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 현재 위치 버튼 -->
+  <button id="location-btn"
+    class="fixed bottom-6 right-4 z-10 bg-white shadow-lg rounded-full w-12 h-12 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"
+    title="현재 위치로 이동">
+    <svg class="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v2m0 16v2M2 12h2m16 0h2"/>
+    </svg>
+  </button>
+
+  <!-- 하단 상세 패널 -->
+  <div id="bottom-panel" class="fixed bottom-0 left-0 right-0 z-20 bg-white rounded-t-2xl shadow-2xl max-h-[75vh] flex flex-col select-none">
+    <div id="panel-handle" class="flex justify-center pt-3 pb-2 cursor-pointer flex-shrink-0">
+      <div class="w-10 h-1 bg-gray-300 rounded-full"></div>
+    </div>
+    <div id="panel-content" class="overflow-y-auto flex-1 px-4 pb-8"></div>
+  </div>
+
+  <!-- 로딩 오버레이 -->
+  <div id="loading" class="fixed inset-0 bg-white/90 z-30 flex flex-col items-center justify-center gap-3">
+    <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full spin-anim"></div>
+    <p id="loading-text" class="text-gray-600 text-sm font-medium">초기화 중...</p>
+  </div>
+
+  <!-- 에러 토스트 -->
+  <div id="error-toast" class="fixed top-20 left-4 right-4 z-40 bg-red-50 border border-red-200 rounded-xl px-4 py-3 shadow-lg hidden">
+    <p id="error-text" class="text-red-700 text-sm"></p>
+  </div>
+
+  <script>
+  // ═══════════════════════════════════════════════════════════
+  //  상수 & 상태
+  // ═══════════════════════════════════════════════════════════
+  const SUWON_CENTER = { lat: 37.2636, lng: 127.0286 };
+  const DEFAULT_ZOOM = 13;
+  const CLUSTER_ZOOM_THRESHOLD = 14;
+  const MAX_VISIBLE_MARKERS = 600;
+
+  const CATEGORY_COLORS = {
+    '음식점':    '#ef4444',
+    '카페':      '#f59e0b',
+    '마트/편의점': '#22c55e',
+    '의료':      '#3b82f6',
+    '미용':      '#a855f7',
+    '교육':      '#f97316',
+    '기타':      '#6b7280',
+  };
+
+  const CATEGORY_KEYWORDS = [
+    ['카페',       ['카페','커피','베이커리','빵집','디저트','아이스크림','제과','케이크']],
+    ['마트/편의점', ['마트','슈퍼','편의점','식료품','유통','소매','잡화']],
+    ['의료',       ['병원','의원','약국','치과','한의원','안과','이비인후과','피부과',
+                    '정형외과','내과','소아과','산부인과','비뇨기과','외과','의료','클리닉']],
+    ['미용',       ['미용','헤어','네일','피부','마사지','스파','뷰티','이발','살롱']],
+    ['교육',       ['학원','교습소','유치원','어린이집','교육','학교','스쿨']],
+    ['음식점',     ['음식점','한식','중식','일식','양식','분식','치킨','피자','햄버거',
+                    '패스트푸드','족발','보쌈','냉면','국밥','갈비','삼겹살','해산물',
+                    '횟집','식당','밥집','국수','도시락','순대','떡볶이','쌀국수']],
+  ];
+
+  function getCategory(industryName) {
+    if (!industryName) return '기타';
+    const lower = industryName.toLowerCase();
+    for (const [cat, kws] of CATEGORY_KEYWORDS) {
+      if (kws.some(kw => lower.includes(kw))) return cat;
+    }
+    return '기타';
+  }
+
+  const state = {
+    map: null,
+    merchants: [],
+    activeMarkers: [],
+    clusterMarkers: [],
+    selectedCategory: '전체',
+    selectedMerchant: null,
+    geocodeCache: {},
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  //  유틸
+  // ═══════════════════════════════════════════════════════════
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function setLoading(v, text) {
+    document.getElementById('loading').style.display = v ? 'flex' : 'none';
+    if (text !== undefined) document.getElementById('loading-text').textContent = text;
+  }
+  let _errTimer;
+  function showError(msg, ms = 5000) {
+    document.getElementById('error-text').textContent = msg;
+    const t = document.getElementById('error-toast');
+    t.classList.remove('hidden');
+    clearTimeout(_errTimer);
+    if (ms > 0) _errTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // ═══════════════════════════════════════════════════════════
+  //  서버 API 호출 (/api/* — 키는 서버에만 존재)
+  // ═══════════════════════════════════════════════════════════
+  async function apiFetch(path) {
+    const res = await fetch(path);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async function fetchMerchantsPage(sigunNm, page, pageSize) {
+    return apiFetch(`/api/merchants?sigunNm=${encodeURIComponent(sigunNm)}&page=${page}&pageSize=${pageSize}`);
+  }
+
+  async function geocode(address) {
+    if (state.geocodeCache[address]) return state.geocodeCache[address];
+    const data = await apiFetch(`/api/geocode?query=${encodeURIComponent(address)}`);
+    const doc = data.documents?.[0];
+    if (!doc) return null;
+    const coords = { lat: parseFloat(doc.y), lng: parseFloat(doc.x) };
+    state.geocodeCache[address] = coords;
+    try { localStorage.setItem('geoCache_v1', JSON.stringify(state.geocodeCache)); } catch (_) {}
+    return coords;
+  }
+
+  async function kakaoSearch(name, lat, lng) {
+    return apiFetch(
+      `/api/kakao-search?query=${encodeURIComponent(name)}&y=${lat}&x=${lng}&radius=300&size=1`
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Naver Maps SDK 동적 로드
+  // ═══════════════════════════════════════════════════════════
+  function loadNaverSDK(clientId) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${encodeURIComponent(clientId)}`;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('네이버 지도 SDK 로드 실패'));
+      document.head.appendChild(s);
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  지도 초기화
+  // ═══════════════════════════════════════════════════════════
+  function initMap(defaultCenter) {
+    const center = defaultCenter || SUWON_CENTER;
+    state.map = new naver.maps.Map('map', {
+      center: new naver.maps.LatLng(center.lat, center.lng),
+      zoom: DEFAULT_ZOOM,
+      mapTypeId: naver.maps.MapTypeId.NORMAL,
+      mapDataControl: false,
+      logoControlOptions:  { position: naver.maps.Position.BOTTOM_LEFT },
+      scaleControlOptions: { position: naver.maps.Position.BOTTOM_LEFT },
+    });
+    naver.maps.Event.addListener(state.map, 'idle', renderMarkers);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  가맹점 데이터 로드
+  // ═══════════════════════════════════════════════════════════
+  async function loadAllMerchants(sigunNm) {
+    setLoading(true, '가맹점 목록 불러오는 중...');
+    const PAGE_SIZE = 1000;
+    const first = await fetchMerchantsPage(sigunNm, 1, PAGE_SIZE);
+
+    const body = first.RegionMnyFacltStus;
+    if (!body) throw new Error('공공데이터 응답 형식 오류');
+
+    const total = body[0]?.head?.[0]?.list_total_count ?? 0;
+    let rows = [...(body[1]?.row ?? [])];
+    const totalPages = Math.min(Math.ceil(total / PAGE_SIZE), 20);
+
+    for (let p = 2; p <= totalPages; p++) {
+      setLoading(true, `가맹점 목록 불러오는 중... (${p}/${totalPages}페이지)`);
+      const more = await fetchMerchantsPage(sigunNm, p, PAGE_SIZE);
+      rows = rows.concat(more.RegionMnyFacltStus?.[1]?.row ?? []);
+      await sleep(150);
+    }
+    return rows;
+  }
+
+  async function processRows(rows) {
+    try {
+      const cached = localStorage.getItem('geoCache_v1');
+      if (cached) state.geocodeCache = JSON.parse(cached);
+    } catch (_) {}
+
+    const merchants = [];
+    const pending = [];
+
+    for (const row of rows) {
+      const lat = parseFloat(row.REFINE_WGS84_LAT);
+      const lng = parseFloat(row.REFINE_WGS84_LOGT);
+      const addr = row.REFINE_ROADNM_ADDR || row.REFINE_LOTNO_ADDR || '';
+      const name = row.BIZPLC_NM || '이름 없음';
+      const industryName = row.INDUTY_NM || '';
+      if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+        merchants.push({ name, industryName, addr, sigunNm: row.SIGUN_NM || '',
+          category: getCategory(industryName), lat, lng });
+      } else if (addr) {
+        pending.push({ row, name, industryName, addr });
+      }
+    }
+
+    if (pending.length > 0) {
+      const BATCH = 5;
+      let done = 0;
+      for (let i = 0; i < pending.length; i += BATCH) {
+        setLoading(true, `좌표 변환 중... (${done}/${pending.length})`);
+        const batch = pending.slice(i, i + BATCH);
+        await Promise.all(batch.map(async ({ row, name, industryName, addr }) => {
+          const coords = await geocode(addr).catch(() => null);
+          done++;
+          if (coords) {
+            merchants.push({ name, industryName, addr, sigunNm: row.SIGUN_NM || '',
+              category: getCategory(industryName), lat: coords.lat, lng: coords.lng });
+          }
+        }));
+        await sleep(100);
+      }
+    }
+    return merchants;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  마커 렌더링
+  // ═══════════════════════════════════════════════════════════
+  function markerIcon(category) {
+    const color = CATEGORY_COLORS[category] || CATEGORY_COLORS['기타'];
+    return {
+      content: `<div style="width:22px;height:22px;background:${color};border:2.5px solid white;border-radius:50%;box-shadow:0 2px 5px rgba(0,0,0,.35);cursor:pointer;"></div>`,
+      size: new naver.maps.Size(22, 22),
+      anchor: new naver.maps.Point(11, 11),
+    };
+  }
+
+  function clusterIcon(count) {
+    const size = count < 10 ? 34 : count < 50 ? 40 : count < 200 ? 48 : 56;
+    const alpha = Math.min(0.92, 0.55 + count / 300).toFixed(2);
+    const fs = size < 40 ? 11 : 13;
+    return {
+      content: `<div style="width:${size}px;height:${size}px;background:rgba(37,99,235,${alpha});border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:${fs}px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.3);cursor:pointer;">${count > 999 ? '999+' : count}</div>`,
+      size: new naver.maps.Size(size, size),
+      anchor: new naver.maps.Point(size / 2, size / 2),
+    };
+  }
+
+  function renderMarkers() {
+    if (!state.map || state.merchants.length === 0) return;
+    const bounds = state.map.getBounds();
+    const zoom   = state.map.getZoom();
+
+    const visible = state.merchants.filter(m => {
+      if (state.selectedCategory !== '전체' && m.category !== state.selectedCategory) return false;
+      return bounds.hasLatLng(new naver.maps.LatLng(m.lat, m.lng));
+    });
+
+    state.activeMarkers.forEach(({ naverMarker }) => naverMarker.setMap(null));
+    state.activeMarkers = [];
+    state.clusterMarkers.forEach(m => m.setMap(null));
+    state.clusterMarkers = [];
+
+    zoom >= CLUSTER_ZOOM_THRESHOLD ? renderIndividual(visible) : renderClustered(visible, zoom);
+  }
+
+  function renderIndividual(merchants) {
+    merchants.slice(0, MAX_VISIBLE_MARKERS).forEach(m => {
+      const nm = new naver.maps.Marker({
+        position: new naver.maps.LatLng(m.lat, m.lng),
+        map: state.map, icon: markerIcon(m.category), title: m.name,
+      });
+      naver.maps.Event.addListener(nm, 'click', () => openPanel(m));
+      state.activeMarkers.push({ naverMarker: nm, merchant: m });
+    });
+  }
+
+  function renderClustered(merchants, zoom) {
+    const gridDeg = zoom < 9 ? 0.15 : zoom < 11 ? 0.06 : zoom < 12 ? 0.03 : 0.015;
+    const grid = new Map();
+    merchants.forEach(m => {
+      const key = `${Math.floor(m.lng / gridDeg)}:${Math.floor(m.lat / gridDeg)}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(m);
+    });
+    grid.forEach(group => {
+      const avgLat = group.reduce((s, m) => s + m.lat, 0) / group.length;
+      const avgLng = group.reduce((s, m) => s + m.lng, 0) / group.length;
+      const count  = group.length;
+      const nm = new naver.maps.Marker({
+        position: new naver.maps.LatLng(avgLat, avgLng),
+        map: state.map,
+        icon: count === 1 ? markerIcon(group[0].category) : clusterIcon(count),
+        title: count === 1 ? group[0].name : `${count}개 가맹점`,
+      });
+      naver.maps.Event.addListener(nm, 'click', () => {
+        if (count === 1) openPanel(group[0]);
+        else {
+          state.map.setCenter(new naver.maps.LatLng(avgLat, avgLng));
+          state.map.setZoom(Math.min(state.map.getZoom() + 2, 18));
+        }
+      });
+      state.clusterMarkers.push(nm);
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  하단 패널
+  // ═══════════════════════════════════════════════════════════
+  function openPanel(merchant) {
+    state.selectedMerchant = merchant;
+    document.getElementById('panel-content').innerHTML = renderBasicInfo(merchant);
+    document.getElementById('bottom-panel').classList.add('open');
+    kakaoSearch(merchant.name, merchant.lat, merchant.lng)
+      .then(data => enrichPanel(data.documents?.[0]))
+      .catch(() => { document.getElementById('kakao-loading')?.remove(); });
+  }
+
+  function closePanel() {
+    document.getElementById('bottom-panel').classList.remove('open');
+    state.selectedMerchant = null;
+  }
+
+  function renderBasicInfo(m) {
+    const color    = CATEGORY_COLORS[m.category] || CATEGORY_COLORS['기타'];
+    const naverUrl = `https://map.naver.com/v5/search/${encodeURIComponent(m.name + ' ' + m.addr)}`;
+    return `
+    <div>
+      <div class="flex items-start gap-2 mb-3">
+        <div class="flex-1 min-w-0">
+          <h2 class="text-lg font-bold text-gray-900 leading-tight truncate">${esc(m.name)}</h2>
+          <div class="flex flex-wrap items-center gap-1.5 mt-1">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold text-white" style="background:${color}">${esc(m.category)}</span>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ 경기지역화폐 가맹</span>
+          </div>
+        </div>
+        <button onclick="closePanel()" class="flex-shrink-0 text-gray-300 hover:text-gray-500 -mt-0.5 p-1">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex items-start gap-2 text-sm text-gray-600 mb-2">
+        <svg class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span>${esc(m.addr)}</span>
+      </div>
+      ${m.industryName ? `
+      <div class="flex items-center gap-2 text-sm text-gray-500 mb-4">
+        <svg class="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        <span>${esc(m.industryName)}</span>
+      </div>` : '<div class="mb-4"></div>'}
+      <div id="kakao-loading" class="flex items-center gap-2 text-xs text-gray-400 mb-4">
+        <div class="w-3 h-3 border-2 border-gray-300 border-t-gray-400 rounded-full spin-anim"></div>
+        상세정보 조회 중...
+      </div>
+      <div id="action-buttons" class="flex gap-2">
+        <a id="btn-naver" href="${naverUrl}" target="_blank" rel="noopener noreferrer"
+           class="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-3 rounded-xl transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+          네이버 플레이스
+        </a>
+      </div>
+    </div>`;
+  }
+
+  function enrichPanel(doc) {
+    document.getElementById('kakao-loading')?.remove();
+    if (!doc) return;
+
+    const phone = doc.phone || '';
+    if (phone) {
+      // 주소 행 아래에 전화번호 삽입
+      const addrEl = document.querySelector('#panel-content .flex.items-start.gap-2.text-sm.text-gray-600');
+      if (addrEl) {
+        const phoneRow = document.createElement('div');
+        phoneRow.className = 'flex items-center gap-2 text-sm text-gray-600 mb-2';
+        phoneRow.innerHTML = `
+          <svg class="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+          <a href="tel:${esc(phone)}" class="text-blue-600 hover:underline">${esc(phone)}</a>`;
+        addrEl.insertAdjacentElement('afterend', phoneRow);
+      }
+      // 전화 버튼 추가
+      const btns = document.getElementById('action-buttons');
+      if (btns) {
+        const phoneBtn = document.createElement('a');
+        phoneBtn.href = `tel:${esc(phone)}`;
+        phoneBtn.className = 'flex items-center justify-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-3 px-4 rounded-xl transition-colors';
+        phoneBtn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>전화하기`;
+        btns.insertBefore(phoneBtn, btns.firstChild);
+        document.getElementById('btn-naver')?.classList.remove('flex-1');
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  이벤트 설정
+  // ═══════════════════════════════════════════════════════════
+  function setupFilters() {
+    document.getElementById('filter-bar').addEventListener('click', e => {
+      const btn = e.target.closest('.filter-btn');
+      if (!btn) return;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.selectedCategory = btn.dataset.category;
+      renderMarkers();
+    });
+  }
+
+  function setupLocationButton() {
+    document.getElementById('location-btn').addEventListener('click', () => {
+      if (!navigator.geolocation) { showError('위치 정보를 지원하지 않는 브라우저입니다.'); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => { state.map.setCenter(new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude)); state.map.setZoom(15); },
+        () => showError('위치 정보를 가져올 수 없습니다. 브라우저 권한을 확인해주세요.')
+      );
+    });
+  }
+
+  function setupPanel() {
+    document.getElementById('panel-handle').addEventListener('click', closePanel);
+    let ty = 0;
+    const panel = document.getElementById('bottom-panel');
+    panel.addEventListener('touchstart', e => { ty = e.touches[0].clientY; }, { passive: true });
+    panel.addEventListener('touchend',   e => { if (e.changedTouches[0].clientY - ty > 70) closePanel(); }, { passive: true });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  진입점
+  // ═══════════════════════════════════════════════════════════
+  async function main() {
+    try {
+      // 1) 서버에서 공개 설정값 가져오기 (Naver Maps Client ID 포함)
+      setLoading(true, '설정 로드 중...');
+      const cfg = await apiFetch('/api/config').catch(err => {
+        document.getElementById('config-error-detail').textContent = err.message;
+        document.getElementById('config-error').style.display = 'flex';
+        setLoading(false);
+        return null;
+      });
+      if (!cfg) return;
+
+      // 2) 네이버 지도 SDK 로드
+      setLoading(true, '지도 초기화 중...');
+      await loadNaverSDK(cfg.naverMapClientId);
+      initMap();
+      setupFilters();
+      setupLocationButton();
+      setupPanel();
+
+      // 3) 가맹점 데이터 로드
+      const rows = await loadAllMerchants(cfg.defaultSigun);
+
+      setLoading(true, `좌표 처리 중... (총 ${rows.length}개)`);
+      const merchants = await processRows(rows);
+
+      state.merchants = merchants;
+      setLoading(false);
+      renderMarkers();
+
+      console.info(`[GPF] 완료: ${merchants.length}개 가맹점 (${cfg.defaultSigun})`);
+
+    } catch (err) {
+      setLoading(false);
+      console.error('[GPF]', err);
+      showError(`오류: ${err.message}`, 0);
+    }
+  }
+
+  main();
+  </script>
+</body>
+</html>
